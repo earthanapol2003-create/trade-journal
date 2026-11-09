@@ -1,12 +1,12 @@
 import pandas as pd
 import streamlit as st
 
-# ตั้งค่าหน้าเว็บให้เต็มตาและรองรับมือถือ
+# ตั้งค่าหน้าเว็บ
 st.set_page_config(
     page_title="Systematic Trader Pro", page_icon="💎", layout="centered"
 )
 
-# ตกแต่ง CSS ให้ธีมเข้มหรูหราสไตล์โปรแกรมเทรดมืออาชีพ
+# ตกแต่ง CSS ธีมเข้มหรูหรา
 st.markdown(
     """
     <style>
@@ -37,22 +37,47 @@ except Exception:
   df = pd.DataFrame()
 
 if not df.empty:
-  # ค้นหาชื่อคอลัมน์กำไร/ขาดทุนอัตโนมัติ
+  # ทำความสะอาดชื่อหัวตาราง (ตัดช่องว่างที่อาจติดมาออก)
+  df.columns = df.columns.astype(str).str.strip()
+
+  # ค้นหาคอลัมน์ที่เกี่ยวกับกำไร/ขาดทุนแบบยืดหยุ่นที่สุด
   pnl_col = None
+  keywords = ["กำไร", "p&l", "profit", "loss", "net", "ผลลัพธ์", "gain"]
   for col in df.columns:
-    if "กำไร" in col or "P&L" in col or "Profit" in col or "Loss" in col:
+    col_lower = col.lower()
+    if any(kw in col_lower for kw in keywords):
       pnl_col = col
       break
 
-  # คำนวณสถิติหลัก
-  total_trades = len(df)
-  total_pnl = df[pnl_col].sum() if pnl_col else 0
+  # ถ้ายังหาไม่เจอ ให้ลองเลือกคอลัมน์ที่เป็นตัวเลขตัวแรกที่มีโอกาสเป็นกำไร
+  if not pnl_col:
+    for col in df.select_dtypes(include=["number"]).columns:
+      pnl_col = col
+      break
 
-  wins = len(df[df[pnl_col] > 0]) if pnl_col else 0
-  losses = len(df[df[pnl_col] < 0]) if pnl_col else 0
-  win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+  # แปลงข้อมูลในคอลัมน์กำไรให้เป็นตัวเลข (ป้องกันกรณีมีเครื่องหมาย $ หรือตัวอักษรติดมา)
+  if pnl_col:
+    df[pnl_col] = (
+        df[pnl_col]
+        .astype(str)
+        .str.replace("$", "", regex=False)
+        .str.replace(",", "", regex=False)
+    )
+    df[pnl_col] = pd.to_numeric(df[pnl_col], errors="coerce").fillna(0)
 
-  # แสดงการ์ดสถิติแบบมืออาชีพ
+    total_trades = len(df)
+    total_pnl = df[pnl_col].sum()
+    wins = len(df[df[pnl_col] > 0])
+    losses = len(df[df[pnl_col] < 0])
+    win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+  else:
+    total_trades = len(df)
+    total_pnl = 0
+    wins = 0
+    losses = 0
+    win_rate = 0
+
+  # แสดงการ์ดสถิติ
   col1, col2 = st.columns(2)
   with col1:
     st.metric(
@@ -72,20 +97,8 @@ if not df.empty:
   st.markdown("---")
   st.markdown("### 📋 ตารางบันทึกประวัติการเทรด")
 
-  # ตกแต่งตารางให้ไฮไลต์สีเฉพาะคอลัมน์กำไร/ขาดทุน (ถ้ามีคอลัมน์นั้น)
-  if pnl_col:
-
-    def highlight_pnl(val):
-      if pd.isna(val):
-        return ""
-      color = "#2ea043" if val > 0 else "#f85149" if val < 0 else "#c9d1d9"
-      return f"color: {color}; font-weight: bold;"
-
-    # ใช้ Styler เพื่อจัดสีเฉพาะคอลัมน์ P&L ให้ดูสะอาดและอ่านง่าย
-    styled_df = df.style.map(highlight_pnl, subset=[pnl_col])
-    st.dataframe(styled_df, use_container_width=True)
-  else:
-    st.dataframe(df, use_container_width=True)
+  # แสดงตารางข้อมูล
+  st.dataframe(df, use_container_width=True)
 
   st.caption("💡 ข้อมูลซิงค์ล่าสุดจากระบบคอมพิวเตอร์ของคุณ")
 else:
