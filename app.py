@@ -52,7 +52,7 @@ if not df.empty:
   losses = len(df[df[pnl_col] < 0]) if pnl_col else 0
   win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
 
-  # แสดงการ์ดสถิติแบบมืออาชีพ (สลับสีตามกำไรขาดทุน)
+  # แสดงการ์ดสถิติแบบมืออาชีพ
   col1, col2 = st.columns(2)
   with col1:
     st.metric(
@@ -72,15 +72,18 @@ if not df.empty:
   st.markdown("---")
   st.markdown("### 📋 ตารางบันทึกประวัติการเทรด")
 
-  # ฟังก์ชันแต่งสีตาราง (ถ้ามีคอลัมน์ P&L จะไฮไลต์เขียว/แดงให้อัตโนมัติ)
+  # ตกแต่งตารางให้ไฮไลต์สีเฉพาะคอลัมน์กำไร/ขาดทุน (ถ้ามีคอลัมน์นั้น)
   if pnl_col:
 
-    def color_pnl(val):
+    def highlight_pnl(val):
+      if pd.isna(val):
+        return ""
       color = "#2ea043" if val > 0 else "#f85149" if val < 0 else "#c9d1d9"
       return f"color: {color}; font-weight: bold;"
 
-    # แสดงตารางพร้อมจัดรูปแบบ
-    st.dataframe(df, use_container_width=True)
+    # ใช้ Styler เพื่อจัดสีเฉพาะคอลัมน์ P&L ให้ดูสะอาดและอ่านง่าย
+    styled_df = df.style.map(highlight_pnl, subset=[pnl_col])
+    st.dataframe(styled_df, use_container_width=True)
   else:
     st.dataframe(df, use_container_width=True)
 
