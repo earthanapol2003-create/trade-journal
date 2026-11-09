@@ -1,0 +1,1217 @@
+import csv
+import os
+import shutil
+import webbrowser
+from datetime import datetime
+import tkinter as tk
+from tkinter import messagebox, ttk, filedialog
+
+FILENAME = "trading_journal.csv"
+CONFIG_FILE = "config_capital.txt"
+RECEIPTS_DIR = "receipts"
+CHARTS_DIR = "charts"
+BACKUP_DIR = "backup_data"
+
+def get_initial_capital():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return float(f.read().strip())
+        except ValueError:
+            return 1000.0
+    return 1000.0
+
+def save_initial_capital(val):
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        f.write(str(val))
+
+def init_file():
+    for d in [RECEIPTS_DIR, CHARTS_DIR, BACKUP_DIR]:
+        if not os.path.exists(d):
+            os.makedirs(d)
+        
+    if not os.path.exists(FILENAME):
+        with open(FILENAME, mode="w", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow(["Date", "Symbol", "Action", "PnL (USD)", "Withdrawal (USD)", "RR Target", "Capital Unit", "Rule Status", "Notes", "Receipt", "Chart"])
+
+class LargeThaiTerminalJournal:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("SYSTEMATIC TRADER PRO — Production & Tax Audit Edition")
+        self.root.geometry("1420x900")
+        self.root.minsize(1100, 780)
+        
+        # Color Palette (Modern Financial Dark Theme)
+        self.BG_MAIN = "#0B0F19"       # Deep Rich Dark
+        self.CARD_BG = "#131C31"       # Rich Navy Card
+        self.INPUT_BG = "#1E293B"      # Input Background
+        self.INPUT_DISABLED = "#0F172A"# Disabled Input Background
+        self.TEXT_MAIN = "#F8FAFC"     # Bright Text
+        self.TEXT_MUTED = "#94A3B8"    # Soft Grey Text
+        
+        self.ACCENT_PRIMARY = "#6366F1" # Vibrant Indigo
+        self.ACCENT_HOVER = "#4F46E5"   # Indigo Hover
+        self.ACCENT_CYAN = "#06B6D4"    # Neon Cyan Accent
+        self.ACCENT_PURPLE = "#A855F7"  # Vivid Purple Accent
+        self.ACCENT_AMBER = "#F59E0B"   # Amber Withdrawal Accent
+        self.GREEN_COLOR = "#10B981"    # Emerald Win
+        self.RED_COLOR = "#EF4444"      # Rose Loss
+        
+        self.FONT_TITLE = ("Tahoma", 16, "bold")
+        self.FONT_HEADER = ("Tahoma", 12, "bold")
+        self.FONT_LABEL = ("Tahoma", 11, "bold")
+        self.FONT_TEXT = ("Tahoma", 11)
+        self.FONT_CARD_TITLE = ("Tahoma", 10, "bold")
+        self.FONT_CARD_VAL = ("Tahoma", 16, "bold")
+
+        self.root.configure(bg=self.BG_MAIN)
+        self.setup_styles()
+        
+        self.root.rowconfigure(2, weight=1)
+        self.root.columnconfigure(0, weight=1)
+        
+        self.selected_receipt_path = ""
+        self.selected_chart_path = ""
+        
+        # ---------------- 1. TOP HEADER & QUICK TOOLS BAR ----------------
+        top_bar = tk.Frame(root, bg=self.BG_MAIN)
+        top_bar.grid(row=0, column=0, sticky="ew", padx=25, pady=(12, 8))
+        top_bar.columnconfigure(1, weight=1)
+        
+        title_frame = tk.Frame(top_bar, bg=self.BG_MAIN)
+        title_frame.grid(row=0, column=0, sticky="w")
+        
+        tk.Label(title_frame, text="⚡ SYSTEMATIC TRADER PRO", font=self.FONT_TITLE, fg=self.TEXT_MAIN, bg=self.BG_MAIN).pack(side="left")
+        tk.Label(title_frame, text="Institutional Terminal", font=self.FONT_TEXT, fg=self.ACCENT_CYAN, bg=self.BG_MAIN).pack(side="left", padx=12)
+
+        # เมนูด่วนด้านบน
+        tools_frame = tk.Frame(top_bar, bg=self.BG_MAIN)
+        tools_frame.grid(row=0, column=1, sticky="e")
+
+        self.create_top_btn(tools_frame, "📊 กราฟพอร์ต", "#D97706", "#B45309", self.open_equity_chart_window)
+        self.create_top_btn(tools_frame, "🇹🇭 คำนวณภาษี", "#2563EB", "#1D4ED8", self.open_tax_calculator)
+        self.create_top_btn(tools_frame, "📄 รายงาน PDF", "#059669", "#047857", self.export_journal_pdf)
+        self.create_top_btn(tools_frame, "🛡️ สำรองข้อมูล", "#475569", "#334155", self.backup_database)
+
+        # ---------------- 2. TOP METRICS CARDS (DASHBOARD) ----------------
+        cards_frame = tk.Frame(root, bg=self.BG_MAIN)
+        cards_frame.grid(row=1, column=0, sticky="ew", padx=25, pady=6)
+        
+        self.card_balance_val = self.create_metric_card(cards_frame, "ยอดเงินพอร์ตสุทธิ", "$0.00", self.TEXT_MAIN, 0, self.ACCENT_PURPLE)
+        self.card_pnl_val = self.create_metric_card(cards_frame, "กำไร/ขาดทุนสุทธิ (รวม)", "$0.00", self.TEXT_MAIN, 1, self.ACCENT_CYAN)
+        self.card_withdraw_val = self.create_metric_card(cards_frame, "ยอดถอนเงินสะสม", "$0.00", self.ACCENT_AMBER, 2, self.ACCENT_AMBER)
+        self.card_winrate_val = self.create_metric_card(cards_frame, "อัตราชนะ (WIN RATE)", "0.0%", self.GREEN_COLOR, 3, self.GREEN_COLOR)
+        self.card_grade_val = self.create_metric_card(cards_frame, "เกรดวินัยการเทรด", "N/A", self.ACCENT_PRIMARY, 4, self.ACCENT_PRIMARY)
+
+        # ---------------- 3. MAIN CONTAINER (RESPONSIVE) ----------------
+        main_container = tk.Frame(root, bg=self.BG_MAIN)
+        main_container.grid(row=2, column=0, sticky="nsew", padx=25, pady=(8, 15))
+        main_container.rowconfigure(0, weight=1)
+        main_container.columnconfigure(1, weight=1)
+
+        # ----- LEFT PANEL: FORM -----
+        form_panel = tk.Frame(main_container, bg=self.CARD_BG, padx=20, pady=16, highlightbackground="#334155", highlightthickness=1)
+        form_panel.grid(row=0, column=0, sticky="ns", padx=(0, 18))
+
+        tk.Label(form_panel, text="📌 บันทึกออเดอร์ & พอร์ต", font=self.FONT_HEADER, fg=self.ACCENT_CYAN, bg=self.CARD_BG).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+
+        self.create_form_field(form_panel, "ทุนตั้งต้นพอร์ต ($):", 1, str(get_initial_capital()), "initial_cap")
+        tk.Frame(form_panel, bg="#334155", height=1).grid(row=2, column=0, columnspan=2, sticky="ew", pady=8)
+
+        self.create_form_field(form_panel, "วันที่เทรด:", 3, datetime.now().strftime("%Y-%m-%d"), "date")
+        self.create_form_field(form_panel, "สินทรัพย์:", 4, "XAUUSD", "symbol")
+        
+        tk.Label(form_panel, text="ประเภทรายการ:", font=self.FONT_TEXT, fg=self.TEXT_MUTED, bg=self.CARD_BG).grid(row=5, column=0, sticky="w", pady=5)
+        self.combo_action = ttk.Combobox(form_panel, values=["กำไร (Win)", "ขาดทุน (Loss)", "ถอนเงินออก (Withdrawal)", "เสมอ (BE)"], state="readonly", width=18, font=self.FONT_TEXT)
+        self.combo_action.current(0)
+        self.combo_action.grid(row=5, column=1, pady=5)
+
+        self.create_form_field(form_panel, "กำไร/ขาดทุน ($):", 6, "", "pnl")
+        self.entry_pnl.bind("<KeyRelease>", self.check_pnl_input)
+
+        self.create_form_field(form_panel, "ถอนเงินออก ($):", 7, "0", "withdraw")
+        self.create_form_field(form_panel, "เป้าหมาย R:R:", 8, "3", "rr")
+        self.create_form_field(form_panel, "ทุนเทรด (ไม้):", 9, "3", "capital")
+        
+        tk.Label(form_panel, text="วินัยการเทรด:", font=self.FONT_TEXT, fg=self.TEXT_MUTED, bg=self.CARD_BG).grid(row=10, column=0, sticky="w", pady=5)
+        self.combo_rule = ttk.Combobox(form_panel, values=["ทำตามระบบ 100%", "มีหลุดแผนเล็กน้อย", "FOMO / หัวร้อน"], state="readonly", width=18, font=self.FONT_TEXT)
+        self.combo_rule.current(0)
+        self.combo_rule.grid(row=10, column=1, pady=5)
+
+        self.create_form_field(form_panel, "บันทึกเพิ่มเติม:", 11, "", "notes")
+
+        # ปุ่มแนบไฟล์แบบกะทัดรัด
+        tk.Label(form_panel, text="แนบไฟล์หลักฐาน:", font=self.FONT_TEXT, fg=self.TEXT_MUTED, bg=self.CARD_BG).grid(row=12, column=0, sticky="w", pady=6)
+        
+        attach_sub_frame = tk.Frame(form_panel, bg=self.CARD_BG)
+        attach_sub_frame.grid(row=12, column=1, sticky="ew", pady=6)
+        attach_sub_frame.columnconfigure(0, weight=1)
+        attach_sub_frame.columnconfigure(1, weight=1)
+
+        self.btn_upload = tk.Button(attach_sub_frame, text="📎 สลิป", font=("Tahoma", 10, "bold"), bg="#334155", fg="white", bd=0, pady=5, cursor="hand2", command=self.upload_receipt)
+        self.btn_upload.grid(row=0, column=0, sticky="ew", padx=(0, 3))
+        
+        self.btn_chart = tk.Button(attach_sub_frame, text="📈 กราฟ", font=("Tahoma", 10, "bold"), bg="#334155", fg="white", bd=0, pady=5, cursor="hand2", command=self.upload_chart)
+        self.btn_chart.grid(row=0, column=1, sticky="ew", padx=(3, 0))
+
+        # ปุ่มบันทึกหลัก
+        self.btn_save = tk.Button(form_panel, text="💾 บันทึกข้อมูลออเดอร์", font=self.FONT_LABEL, bg=self.ACCENT_PRIMARY, fg="white", bd=0, pady=11, cursor="hand2", command=self.save_entry)
+        self.btn_save.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(16, 5))
+        self.bind_hover_effect(self.btn_save, self.ACCENT_PRIMARY, self.ACCENT_HOVER)
+
+        # ----- RIGHT PANEL: TABLE & ACTIONS -----
+        right_container = tk.Frame(main_container, bg=self.BG_MAIN)
+        right_container.grid(row=0, column=1, sticky="nsew")
+        right_container.rowconfigure(0, weight=1)
+        right_container.columnconfigure(0, weight=1)
+
+        table_frame = tk.Frame(right_container, bg=self.CARD_BG, padx=16, pady=16, highlightbackground="#334155", highlightthickness=1)
+        table_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
+        table_frame.rowconfigure(1, weight=1)
+        table_frame.columnconfigure(0, weight=1)
+
+        filter_header_frame = tk.Frame(table_frame, bg=self.CARD_BG)
+        filter_header_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+
+        tk.Label(filter_header_frame, text="📜 ประวัติคำสั่งเทรดและการทำธุรกรรม", font=self.FONT_HEADER, fg=self.ACCENT_CYAN, bg=self.CARD_BG).pack(side="left")
+
+        tk.Label(filter_header_frame, text="เลือกเดือน:", font=self.FONT_TEXT, fg=self.TEXT_MUTED, bg=self.CARD_BG).pack(side="left", padx=(18, 8))
+        self.combo_month_filter = ttk.Combobox(filter_header_frame, values=["ทั้งหมด (All Time)"], state="readonly", width=18, font=self.FONT_TEXT)
+        self.combo_month_filter.current(0)
+        self.combo_month_filter.pack(side="left")
+        self.combo_month_filter.bind("<<ComboboxSelected>>", lambda e: self.refresh_all_data())
+
+        tree_container = tk.Frame(table_frame, bg=self.CARD_BG)
+        tree_container.grid(row=1, column=0, sticky="nsew")
+        tree_container.rowconfigure(0, weight=1)
+        tree_container.columnconfigure(0, weight=1)
+
+        columns = ("Date", "Symbol", "PnL", "Withdraw", "RR", "Capital", "Rule", "Receipt", "Chart")
+        self.tree = ttk.Treeview(tree_container, columns=columns, show="headings")
+        
+        self.tree.heading("Date", text="วันที่")
+        self.tree.heading("Symbol", text="คู่เงิน")
+        self.tree.heading("PnL", text="กำไร/ขาดทุน ($)")
+        self.tree.heading("Withdraw", text="ถอนออก ($)")
+        self.tree.heading("RR", text="เป้า R:R")
+        self.tree.heading("Capital", text="ทุนไม้")
+        self.tree.heading("Rule", text="วินัยการเทรด")
+        self.tree.heading("Receipt", text="สลิปถอน")
+        self.tree.heading("Chart", text="รูปกราฟ")
+
+        self.tree.column("Date", width=105, anchor="center")
+        self.tree.column("Symbol", width=80, anchor="center")
+        self.tree.column("PnL", width=125, anchor="e")
+        self.tree.column("Withdraw", width=110, anchor="e")
+        self.tree.column("RR", width=70, anchor="center")
+        self.tree.column("Capital", width=70, anchor="center")
+        self.tree.column("Rule", width=150, anchor="center")
+        self.tree.column("Receipt", width=95, anchor="center")
+        self.tree.column("Chart", width=95, anchor="center")
+
+        scrollbar = ttk.Scrollbar(tree_container, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscroll=scrollbar.set)
+        
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        self.tree.bind("<Double-1>", self.open_receipt_from_tree)
+
+        self.tree.tag_configure("win", foreground=self.GREEN_COLOR)
+        self.tree.tag_configure("loss", foreground=self.RED_COLOR)
+        self.tree.tag_configure("withdraw", foreground=self.ACCENT_AMBER)
+
+        btn_action_frame = tk.Frame(right_container, bg=self.BG_MAIN)
+        btn_action_frame.grid(row=1, column=0, sticky="ew")
+        btn_action_frame.columnconfigure(0, weight=1)
+        btn_action_frame.columnconfigure(1, weight=1)
+        btn_action_frame.columnconfigure(2, weight=1)
+
+        self.btn_view_receipt = tk.Button(btn_action_frame, text="🖼️ ดูสลิปหลักฐาน", font=self.FONT_LABEL, bg=self.ACCENT_PRIMARY, fg="white", bd=0, pady=9, cursor="hand2", command=self.view_selected_receipt)
+        self.btn_view_receipt.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self.bind_hover_effect(self.btn_view_receipt, self.ACCENT_PRIMARY, self.ACCENT_HOVER)
+
+        self.btn_view_chart = tk.Button(btn_action_frame, text="📈 ดูรูปกราฟเทรด", font=self.FONT_LABEL, bg="#0284C7", fg="white", bd=0, pady=9, cursor="hand2", command=self.view_selected_chart)
+        self.btn_view_chart.grid(row=0, column=1, sticky="ew", padx=6)
+        self.bind_hover_effect(self.btn_view_chart, "#0284C7", "#0369A1")
+
+        self.btn_delete = tk.Button(btn_action_frame, text="🗑️ ลบรายการที่เลือก", font=self.FONT_LABEL, bg=self.RED_COLOR, fg="white", bd=0, pady=9, cursor="hand2", command=self.delete_selected_entry)
+        self.btn_delete.grid(row=0, column=2, sticky="ew", padx=(6, 0))
+        self.bind_hover_effect(self.btn_delete, self.RED_COLOR, "#DC2626")
+
+        # ---------------- 4. STATUS BAR ----------------
+        self.status_bar = tk.Frame(root, bg=self.CARD_BG, height=34, highlightbackground="#334155", highlightthickness=1)
+        self.status_bar.grid(row=3, column=0, sticky="ew", padx=25, pady=(0, 12))
+        
+        self.lbl_pulse = tk.Label(self.status_bar, text="●", font=("Tahoma", 12, "bold"), fg=self.GREEN_COLOR, bg=self.CARD_BG)
+        self.lbl_pulse.pack(side="left", padx=(12, 0), pady=4)
+
+        self.lbl_status = tk.Label(self.status_bar, text=" ระบบเชื่อมต่อสำเร็จ — พร้อมใช้งานระดับสถาบัน", font=self.FONT_TEXT, fg=self.GREEN_COLOR, bg=self.CARD_BG)
+        self.lbl_status.pack(side="left", padx=6, pady=4)
+        
+        self.lbl_clock = tk.Label(self.status_bar, text="", font=self.FONT_TEXT, fg=self.ACCENT_CYAN, bg=self.CARD_BG)
+        self.lbl_clock.pack(side="right", padx=12, pady=4)
+        
+        self.update_live_clock()
+        self.animate_pulse()
+
+        self.check_pnl_input(None)
+        self.refresh_all_data()
+
+    def create_top_btn(self, parent, text, bg_color, hover_color, command):
+        btn = tk.Button(parent, text=text, font=("Tahoma", 10, "bold"), bg=bg_color, fg="white", bd=0, padx=12, pady=6, cursor="hand2", command=command)
+        btn.pack(side="left", padx=4)
+        self.bind_hover_effect(btn, bg_color, hover_color)
+        return btn
+
+    def setup_styles(self):
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("Treeview", background=self.CARD_BG, foreground=self.TEXT_MAIN, fieldbackground=self.CARD_BG, rowheight=38, font=self.FONT_TEXT, borderwidth=0)
+        style.configure("Treeview.Heading", background=self.INPUT_BG, foreground=self.TEXT_MUTED, font=self.FONT_HEADER, borderwidth=0)
+        style.map("Treeview", background=[("selected", self.ACCENT_PRIMARY)])
+
+    def bind_hover_effect(self, btn, normal_color, hover_color):
+        btn.bind("<Enter>", lambda e: btn.config(bg=hover_color))
+        btn.bind("<Leave>", lambda e: btn.config(bg=normal_color))
+
+    def update_live_clock(self):
+        current_time = datetime.now().strftime("%Y-%m-%d | %H:%M:%S")
+        self.lbl_clock.config(text=f"🕒 {current_time}")
+        self.root.after(1000, self.update_live_clock)
+
+    def animate_pulse(self):
+        current_color = self.lbl_pulse.cget("fg")
+        next_color = self.TEXT_MUTED if current_color == self.GREEN_COLOR else self.GREEN_COLOR
+        self.lbl_pulse.config(fg=next_color)
+        self.root.after(800, self.animate_pulse)
+
+    def create_metric_card(self, parent, title, initial_val, text_color, col_idx, border_color):
+        card = tk.Frame(parent, bg=self.CARD_BG, padx=14, pady=10, highlightbackground=border_color, highlightthickness=1)
+        card.grid(row=0, column=col_idx, sticky="ew", padx=(0 if col_idx==0 else 8, 0))
+        parent.columnconfigure(col_idx, weight=1)
+        
+        tk.Label(card, text=title, font=self.FONT_CARD_TITLE, fg=self.TEXT_MUTED, bg=self.CARD_BG).pack(anchor="w")
+        val_label = tk.Label(card, text=initial_val, font=self.FONT_CARD_VAL, fg=text_color, bg=self.CARD_BG)
+        val_label.pack(anchor="w", pady=(3, 0))
+        return val_label
+
+    def create_form_field(self, parent, label_text, row, default_val, field_name):
+        tk.Label(parent, text=label_text, font=self.FONT_TEXT, fg=self.TEXT_MUTED, bg=self.CARD_BG).grid(row=row, column=0, sticky="w", pady=5)
+        entry = tk.Entry(parent, font=self.FONT_TEXT, bg=self.INPUT_BG, fg=self.TEXT_MAIN, insertbackground="white", bd=0, highlightthickness=1, highlightbackground="#475569", width=20)
+        entry.insert(0, default_val)
+        entry.grid(row=row, column=1, pady=5, ipady=4)
+        setattr(self, f"entry_{field_name}", entry)
+
+    def check_pnl_input(self, event):
+        pnl_text = self.entry_pnl.get().strip()
+        has_pnl = False
+        if pnl_text:
+            try:
+                val = float(pnl_text)
+                if val != 0:
+                    has_pnl = True
+            except ValueError:
+                pass
+
+        if not has_pnl:
+            self.entry_rr.config(state="normal")
+            self.entry_rr.delete(0, tk.END)
+            self.entry_rr.insert(0, "-")
+            self.entry_rr.config(state="disabled", disabledbackground=self.INPUT_DISABLED)
+
+            self.entry_capital.config(state="normal")
+            self.entry_capital.delete(0, tk.END)
+            self.entry_capital.insert(0, "-")
+            self.entry_capital.config(state="disabled", disabledbackground=self.INPUT_DISABLED)
+        else:
+            self.entry_rr.config(state="normal", bg=self.INPUT_BG)
+            if self.entry_rr.get() == "-":
+                self.entry_rr.delete(0, tk.END)
+                self.entry_rr.insert(0, "3")
+
+            self.entry_capital.config(state="normal", bg=self.INPUT_BG)
+            if self.entry_capital.get() == "-":
+                self.entry_capital.delete(0, tk.END)
+                self.entry_capital.insert(0, "3")
+
+    def upload_receipt(self):
+        file_path = filedialog.askopenfilename(
+            title="เลือกรูปภาพสลิปหลักฐาน",
+            filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp"), ("All Files", "*.*")]
+        )
+        if file_path:
+            try:
+                if not os.path.exists(RECEIPTS_DIR):
+                    os.makedirs(RECEIPTS_DIR)
+                ext = os.path.splitext(file_path)[1]
+                new_filename = f"Receipt_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+                dest_path = os.path.join(RECEIPTS_DIR, new_filename)
+                with open(file_path, "rb") as src, open(dest_path, "wb") as dst:
+                    dst.write(src.read())
+                self.selected_receipt_path = dest_path
+                self.btn_upload.config(text="✅ สลิปแล้ว", bg=self.GREEN_COLOR)
+                messagebox.showinfo("สำเร็จ", "📎 แนบรูปสลิปหลักฐานเรียบร้อยแล้วครับ!")
+            except Exception as e:
+                messagebox.showerror("เกิดข้อผิดพลาด", f"ไม่สามารถโหลดไฟล์รูปภาพได้: {str(e)}")
+
+    def upload_chart(self):
+        file_path = filedialog.askopenfilename(
+            title="เลือกรูปภาพกราฟหน้าจอเทรด",
+            filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp"), ("All Files", "*.*")]
+        )
+        if file_path:
+            try:
+                if not os.path.exists(CHARTS_DIR):
+                    os.makedirs(CHARTS_DIR)
+                ext = os.path.splitext(file_path)[1]
+                new_filename = f"Chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+                dest_path = os.path.join(CHARTS_DIR, new_filename)
+                with open(file_path, "rb") as src, open(dest_path, "wb") as dst:
+                    dst.write(src.read())
+                self.selected_chart_path = dest_path
+                self.btn_chart.config(text="✅ กราฟแล้ว", bg=self.GREEN_COLOR)
+                messagebox.showinfo("สำเร็จ", "📈 แนบรูปกราฟเทรดเรียบร้อยแล้วครับ!")
+            except Exception as e:
+                messagebox.showerror("เกิดข้อผิดพลาด", f"ไม่สามารถโหลดไฟล์รูปภาพได้: {str(e)}")
+
+    def save_entry(self):
+        try:
+            init_cap_val = float(self.entry_initial_cap.get().strip())
+            save_initial_capital(init_cap_val)
+        except ValueError:
+            pass
+
+        date_str = self.entry_date.get().strip()
+        symbol = self.entry_symbol.get().strip().upper()
+        action = self.combo_action.get()
+        pnl_raw = self.entry_pnl.get().strip()
+        withdraw_raw = self.entry_withdraw.get().strip()
+        rule = self.combo_rule.get()
+        notes = self.entry_notes.get().strip()
+        receipt_path = self.selected_receipt_path
+        chart_path = self.selected_chart_path
+
+        self.entry_rr.config(state="normal")
+        self.entry_capital.config(state="normal")
+        rr_raw = self.entry_rr.get().strip()
+        capital_raw = self.entry_capital.get().strip()
+        self.check_pnl_input(None)
+
+        try:
+            pnl_val = float(pnl_raw) if pnl_raw else 0.0
+            if "ขาดทุน" in action and pnl_val > 0:
+                pnl = -pnl_val
+            elif "กำไร" in action and pnl_val < 0:
+                pnl = abs(pnl_val)
+            else:
+                pnl = pnl_val
+        except ValueError:
+            pnl = 0.0
+
+        try:
+            withdraw = float(withdraw_raw) if withdraw_raw else 0.0
+        except ValueError:
+            withdraw = 0.0
+
+        if "ถอนเงินออก" in action and withdraw <= 0:
+            messagebox.showwarning("ข้อผิดพลาด", "กรุณากรอกจำนวนเงินที่ต้องการถอนออกด้วยครับ")
+            return
+
+        try:
+            clean_rr = rr_raw.replace("R", "").replace("r", "").strip()
+            rr_display = f"{float(clean_rr):g}R" if clean_rr and clean_rr != "-" else "-"
+        except ValueError:
+            rr_display = rr_raw if rr_raw else "-"
+
+        capital_display = capital_raw if capital_raw and capital_raw != "-" else "-"
+
+        with open(FILENAME, mode="a", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow([date_str, symbol, action, pnl, withdraw, rr_display, capital_display, rule, notes, receipt_path, chart_path])
+
+        self.lbl_status.config(text=f" บันทึกสำเร็จ: {symbol} | PnL: ${pnl:,.2f}", fg=self.GREEN_COLOR)
+        messagebox.showinfo("สำเร็จ", "✅ บันทึกรายการพร้อมหลักฐานสำเร็จเรียบร้อยครับ!")
+        
+        self.entry_pnl.delete(0, tk.END)
+        self.entry_withdraw.delete(0, tk.END)
+        self.entry_withdraw.insert(0, "0")
+        self.entry_notes.delete(0, tk.END)
+        self.selected_receipt_path = ""
+        self.selected_chart_path = ""
+        self.btn_upload.config(text="📎 สลิป", bg="#334155")
+        self.btn_chart.config(text="📈 กราฟ", bg="#334155")
+        self.check_pnl_input(None)
+        self.refresh_all_data()
+
+    def view_selected_receipt(self):
+        selected_item = self.tree.selection()
+        if not selected_item:
+            messagebox.showwarning("แจ้งเตือน", "กรุณาคลิกเลือกรายการที่ต้องการดูสลิปในตารางก่อนครับ")
+            return
+        all_rows = self.get_all_csv_rows()
+        all_items = self.tree.get_children()
+        row_pos = list(all_items).index(selected_item[0])
+        csv_index = len(all_rows) - 1 - row_pos
+        if 0 <= csv_index < len(all_rows):
+            row_data = all_rows[csv_index]
+            if len(row_data) >= 10 and row_data[9].strip():
+                path = row_data[9].strip()
+                if os.path.exists(path):
+                    webbrowser.open(os.path.abspath(path))
+                else:
+                    messagebox.showerror("ไม่พบไฟล์", f"ไม่พบไฟล์รูปสลิปที่: {path}")
+            else:
+                messagebox.showinfo("ไม่มีหลักฐาน", "⚠️ รายการนี้ยังไม่ได้แนบรูปสลิปหลักฐานครับ")
+
+    def view_selected_chart(self):
+        selected_item = self.tree.selection()
+        if not selected_item:
+            messagebox.showwarning("แจ้งเตือน", "กรุณาคลิกเลือกรายการที่ต้องการดูกราฟในตารางก่อนครับ")
+            return
+        all_rows = self.get_all_csv_rows()
+        all_items = self.tree.get_children()
+        row_pos = list(all_items).index(selected_item[0])
+        csv_index = len(all_rows) - 1 - row_pos
+        if 0 <= csv_index < len(all_rows):
+            row_data = all_rows[csv_index]
+            if len(row_data) >= 11 and row_data[10].strip():
+                path = row_data[10].strip()
+                if os.path.exists(path):
+                    webbrowser.open(os.path.abspath(path))
+                else:
+                    messagebox.showerror("ไม่พบไฟล์", f"ไม่พบไฟล์รูปกราฟที่: {path}")
+            else:
+                messagebox.showinfo("ไม่มีหลักฐาน", "⚠️ รายการนี้ยังไม่ได้แนบรูปกราฟหน้าจอครับ")
+
+    def open_receipt_from_tree(self, event):
+        self.view_selected_receipt()
+
+    def get_all_csv_rows(self):
+        rows = []
+        if os.path.exists(FILENAME):
+            with open(FILENAME, mode="r", encoding="utf-8") as file:
+                reader = csv.reader(file)
+                next(reader, None)
+                rows = list(reader)
+        return rows
+
+    def backup_database(self):
+        try:
+            if not os.path.exists(BACKUP_DIR):
+                os.makedirs(BACKUP_DIR)
+                
+            timestamp = datetime.now().strftime("%d-%m-%Y_%H%M%S")
+            backup_sub = os.path.join(BACKUP_DIR, f"Backup_{timestamp}")
+            os.makedirs(backup_sub)
+
+            if os.path.exists(FILENAME):
+                shutil.copy(FILENAME, backup_sub)
+            if os.path.exists(CONFIG_FILE):
+                shutil.copy(CONFIG_FILE, backup_sub)
+            if os.path.exists(RECEIPTS_DIR):
+                shutil.copytree(RECEIPTS_DIR, os.path.join(backup_sub, RECEIPTS_DIR))
+            if os.path.exists(CHARTS_DIR):
+                shutil.copytree(CHARTS_DIR, os.path.join(backup_sub, CHARTS_DIR))
+
+            all_backups = sorted([os.path.join(BACKUP_DIR, d) for d in os.listdir(BACKUP_DIR) if os.path.isdir(os.path.join(BACKUP_DIR, d))])
+            max_backups = 5
+            if len(all_backups) > max_backups:
+                for old_backup in all_backups[:-max_backups]:
+                    try:
+                        shutil.rmtree(old_backup)
+                    except Exception:
+                        pass
+
+            messagebox.showinfo("สำเร็จ", f"🛡️ สำรองข้อมูลพอร์ตเรียบร้อยแล้ว!\n(ชื่อโฟลเดอร์: Backup_{timestamp})\nระบบจัดการเก็บไว้ 5 ชุดล่าสุดให้อัตโนมัติครับ!")
+        except Exception as e:
+            messagebox.showerror("เกิดข้อผิดพลาด", f"ไม่สามารถสำรองข้อมูลได้: {str(e)}")
+
+    def open_equity_chart_window(self):
+        rows = self.get_all_csv_rows()
+        if not rows:
+            messagebox.showwarning("แจ้งเตือน", "ยังไม่มีข้อมูลประวัติการเทรดให้สร้างกราฟครับ")
+            return
+
+        eq_win = tk.Toplevel(self.root)
+        eq_win.title("📊 กราฟความเติบโตของพอร์ต (Institutional Equity Curve)")
+        eq_win.geometry("960x680")
+        eq_win.configure(bg=self.BG_MAIN)
+        eq_win.resizable(False, False)
+
+        header_frame = tk.Frame(eq_win, bg=self.BG_MAIN)
+        header_frame.pack(fill="x", padx=30, pady=(20, 10))
+        
+        tk.Label(header_frame, text="📊 EQUITY CURVE PERFORMANCE ANALYSIS", font=("Tahoma", 15, "bold"), fg=self.ACCENT_CYAN, bg=self.BG_MAIN).pack(anchor="w")
+        tk.Label(header_frame, text="กราฟแสดงเส้นทางการเติบโตของยอดเงินพอร์ตสุทธิ พร้อมจำลองพื้นที่สะสมกำไร (High-End Terminal View)", font=self.FONT_TEXT, fg=self.TEXT_MUTED, bg=self.BG_MAIN).pack(anchor="w", pady=(2, 0))
+
+        try:
+            initial_cap = float(self.entry_initial_cap.get().strip())
+        except ValueError:
+            initial_cap = get_initial_capital()
+
+        points = []
+        current_eq = initial_cap
+        points.append((0, current_eq, "เริ่มต้น", "Initial Capital"))
+
+        sorted_rows = sorted(rows, key=lambda x: x[0] if len(x)>0 else "")
+
+        for idx, row in enumerate(sorted_rows, start=1):
+            if len(row) >= 5:
+                date, sym, act, pnl, withdraw = row[:5]
+                try:
+                    pnl_f = float(pnl) if pnl else 0.0
+                    wd_f = float(withdraw) if withdraw else 0.0
+                    current_eq = current_eq + pnl_f - wd_f
+                    points.append((idx, current_eq, date, f"{sym} ({act})"))
+                except ValueError:
+                    pass
+
+        if len(points) <= 1:
+            messagebox.showwarning("แจ้งเตือน", "ข้อมูลประวัติยังไม่เพียงพอสำหรับการวาดกราฟครับ")
+            eq_win.destroy()
+            return
+
+        final_eq = points[-1][1]
+        total_profit = final_eq - initial_cap
+        profit_color = self.GREEN_COLOR if total_profit >= 0 else self.RED_COLOR
+
+        stat_bar = tk.Frame(eq_win, bg=self.BG_MAIN)
+        stat_bar.pack(fill="x", padx=30, pady=(0, 12))
+
+        def make_mini_card(parent, title, val, col):
+            f = tk.Frame(parent, bg=self.CARD_BG, padx=14, pady=8, highlightbackground=col, highlightthickness=1)
+            f.pack(side="left", fill="x", expand=True, padx=(0, 10) if parent.winfo_children() else 0)
+            tk.Label(f, text=title, font=("Tahoma", 9, "bold"), fg=self.TEXT_MUTED, bg=self.CARD_BG).pack(anchor="w")
+            tk.Label(f, text=val, font=("Tahoma", 13, "bold"), fg=col, bg=self.CARD_BG).pack(anchor="w", pady=(2,0))
+
+        make_mini_card(stat_bar, "ทุนตั้งต้นพอร์ต", f"${initial_cap:,.2f}", self.ACCENT_PRIMARY)
+        make_mini_card(stat_bar, "ยอดพอร์ตปัจจุบัน", f"${final_eq:,.2f}", self.ACCENT_CYAN)
+        make_mini_card(stat_bar, "กำไรสุทธิทั้งหมด", f"${total_profit:,.2f}", profit_color)
+
+        canvas_card = tk.Frame(eq_win, bg=self.CARD_BG, padx=15, pady=15, highlightbackground="#334155", highlightthickness=1)
+        canvas_card.pack(fill="both", expand=True, padx=30, pady=(0, 25))
+
+        canvas_w = 880
+        canvas_h = 420
+        canvas = tk.Canvas(canvas_card, width=canvas_w, height=canvas_h, bg=self.CARD_BG, highlightthickness=0)
+        canvas.pack(fill="both", expand=True)
+
+        eq_values = [p[1] for p in points]
+        min_eq = min(eq_values) * 0.94
+        max_eq = max(eq_values) * 1.06
+        if max_eq == min_eq:
+            max_eq += 100
+
+        margin_x = 90
+        margin_y = 45
+        draw_w = canvas_w - (margin_x * 2)
+        draw_h = canvas_h - (margin_y * 2)
+
+        def get_coords(i, eq):
+            x = margin_x + (i / (len(points) - 1)) * draw_w if len(points) > 1 else margin_x
+            y = canvas_h - margin_y - ((eq - min_eq) / (max_eq - min_eq)) * draw_h
+            return x, y
+
+        grid_steps = 5
+        for i in range(grid_steps + 1):
+            val = min_eq + (i / grid_steps) * (max_eq - min_eq)
+            _, y = get_coords(0, val)
+            canvas.create_line(margin_x, y, canvas_w - margin_x, y, fill="#1E293B", dash=(4, 4), width=1)
+            canvas.create_text(margin_x - 14, y, text=f"${val:,.0f}", fill=self.TEXT_MUTED, anchor="e", font=("Tahoma", 9, "bold"))
+
+        coord_list = []
+        for i, p in enumerate(points):
+            x, y = get_coords(i, p[1])
+            coord_list.append((x, y))
+
+        base_y = canvas_h - margin_y
+        poly_points = [coord_list[0][0], base_y]
+        for x, y in coord_list:
+            poly_points.extend([x, y])
+        poly_points.extend([coord_list[-1][0], base_y])
+        
+        try:
+            canvas.create_polygon(poly_points, fill="#172554", outline="")
+        except Exception:
+            pass
+
+        for i in range(len(coord_list) - 1):
+            x1, y1 = coord_list[i]
+            x2, y2 = coord_list[i+1]
+            canvas.create_line(x1, y1, x2, y2, fill=self.ACCENT_CYAN, width=3, capstyle=tk.ROUND, joinstyle=tk.ROUND)
+
+        total_pts = len(points)
+        step_skip = max(1, total_pts // 8)
+
+        for i, (x, y) in enumerate(coord_list):
+            p = points[i]
+            canvas.create_oval(x-5, y-5, x+5, y+5, fill=self.ACCENT_PURPLE, outline=self.TEXT_MAIN, width=2)
+            if i == 0 or i == total_pts - 1 or i % step_skip == 0:
+                canvas.create_text(x, canvas_h - margin_y + 16, text=p[2], fill=self.TEXT_MUTED, font=("Tahoma", 9), angle=25)
+
+    def export_journal_pdf(self):
+        rows = self.get_all_csv_rows()
+        if not rows:
+            messagebox.showwarning("แจ้งเตือน", "ยังไม่มีข้อมูลประวัติการเทรดให้ส่งออกครับ")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".html",
+            filetypes=[("HTML Report / PDF Print", "*.html"), ("All Files", "*.*")],
+            title="บันทึกรายงานประวัติการเทรดเป็น PDF",
+            initialfile=f"Trading_Financial_Audit_{datetime.now().strftime('%Y%m%d')}.html"
+        )
+
+        if file_path:
+            rows_html = ""
+            total_pnl_sum = 0.0
+            total_withdraw_sum = 0.0
+            try:
+                for idx, row in enumerate(rows, start=1):
+                    if len(row) >= 5:
+                        date, sym, act, pnl, withdraw = row[:5]
+                        pnl_f = float(pnl) if pnl else 0.0
+                        wd_f = float(withdraw) if withdraw else 0.0
+                        
+                        total_pnl_sum += pnl_f
+                        total_withdraw_sum += wd_f
+
+                        pnl_color = "#059669" if pnl_f > 0 else ("#DC2626" if pnl_f < 0 else "#64748b")
+                        pnl_str = f"+${pnl_f:,.2f}" if pnl_f > 0 else f"-${abs(pnl_f):,.2f}" if pnl_f < 0 else "$0.00"
+                        wd_str = f"${wd_f:,.2f}" if wd_f > 0 else "-"
+                        row_bg = "#f8fafc" if idx % 2 == 0 else "#ffffff"
+
+                        rows_html += f"""
+                        <tr style="background-color: {row_bg};">
+                            <td style="padding: 12px 16px; border-bottom: 1px solid #e2e8f0; text-align: center; color: #334155; font-size: 13px;">{date}</td>
+                            <td style="padding: 12px 16px; border-bottom: 1px solid #e2e8f0; text-align: center; color: #0f172a; font-weight: bold; font-size: 13px;">{sym}</td>
+                            <td style="padding: 12px 16px; border-bottom: 1px solid #e2e8f0; text-align: center; color: #475569; font-size: 13px;">{act}</td>
+                            <td style="padding: 12px 16px; border-bottom: 1px solid #e2e8f0; text-align: right; color: {pnl_color}; font-weight: bold; font-size: 13px;">{pnl_str}</td>
+                            <td style="padding: 12px 16px; border-bottom: 1px solid #e2e8f0; text-align: right; color: #d97706; font-weight: 500; font-size: 13px;">{wd_str}</td>
+                        </tr>
+                        """
+            except Exception as e:
+                messagebox.showerror("เกิดข้อผิดพลาด", f"ไม่สามารถอ่านข้อมูลได้: {str(e)}")
+                return
+
+            html_content = f"""
+            <!DOCTYPE html>
+            <html lang="th">
+            <head>
+                <meta charset="UTF-8">
+                <title>รายงานสรุปรายการเงินได้และธุรกรรมการเทรด</title>
+                <style>
+                    body {{ font-family: 'Tahoma', sans-serif; background-color: #f1f5f9; color: #1e293b; margin: 0; padding: 40px 20px; }}
+                    .page-container {{ max-width: 850px; margin: auto; background: #ffffff; padding: 50px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }}
+                    .print-btn-container {{ text-align: center; margin-bottom: 30px; }}
+                    .print-btn {{ background: #059669; color: white; padding: 14px 30px; font-size: 15px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; box-shadow: 0 4px 12px rgba(5,150,105,0.25); }}
+                    .print-btn:hover {{ background: #047857; }}
+                    .header {{ border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: flex-end; }}
+                    .header-left h2 {{ margin: 0; color: #0f172a; font-size: 20px; font-weight: bold; }}
+                    .header-left p {{ margin: 6px 0 0 0; color: #64748b; font-size: 13px; }}
+                    .header-right {{ text-align: right; font-size: 12px; color: #94a3b8; }}
+                    table {{ width: 100%; border-collapse: collapse; margin-top: 10px; margin-bottom: 30px; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0; }}
+                    th {{ background: #f8fafc; color: #475569; padding: 14px 16px; font-size: 13px; font-weight: bold; text-align: center; border-bottom: 2px solid #cbd5e1; }}
+                    .summary-card {{ background: #f8fafc; border: 1px solid #cbd5e1; padding: 20px 24px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-top: 20px; }}
+                    .summary-item span {{ display: block; font-size: 12px; color: #64748b; margin-bottom: 4px; }}
+                    .summary-item strong {{ font-size: 16px; color: #0f172a; }}
+                    .footer {{ margin-top: 40px; font-size: 11px; text-align: center; color: #94a3b8; border-top: 1px solid #f1f5f9; padding-top: 20px; }}
+                    @media print {{ body {{ background-color: #ffffff; padding: 0; }} .page-container {{ box-shadow: none; padding: 0; max-width: 100%; }} .print-btn-container {{ display: none; }} }}
+                </style>
+            </head>
+            <body>
+                <div class="page-container">
+                    <div class="print-btn-container">
+                        <button class="print-btn" onclick="window.print()">🖨️ คลิกที่นี่เพื่อพิมพ์รายงานการเงิน / บันทึกเป็น PDF</button>
+                    </div>
+                    <div class="header">
+                        <div class="header-left">
+                            <h2>รายงานสรุปรายการเงินได้และธุรกรรมการเทรด</h2>
+                            <p>Tax Audit Evidence Report — ระบบ Systematic Trader Pro</p>
+                        </div>
+                        <div class="header-right">วันที่พิมพ์: {datetime.now().strftime('%d/%m/%Y %H:%M')}</div>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 18%;">วันที่</th>
+                                <th style="width: 15%;">สินทรัพย์</th>
+                                <th style="width: 25%;">ประเภทรายการ</th>
+                                <th style="width: 22%; text-align: right;">กำไร/ขาดทุนสุทธิ ($)</th>
+                                <th style="width: 20%; text-align: right;">ยอดถอนเงินออก ($)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows_html}
+                        </tbody>
+                    </table>
+                    <div class="summary-card">
+                        <div class="summary-item">
+                            <span>กำไร/ขาดทุนสุทธิรวมทั้งหมด (Total PnL)</span>
+                            <strong style="color: {'#059669' if total_pnl_sum >= 0 else '#DC2626'};">${total_pnl_sum:,.2f} USD</strong>
+                        </div>
+                        <div class="summary-item" style="text-align: right;">
+                            <span>ยอดถอนเงินสะสมรวมทั้งหมด (Total Withdrawal)</span>
+                            <strong style="color: #d97706;">${total_withdraw_sum:,.2f} USD</strong>
+                        </div>
+                    </div>
+                    <div class="footer">เอกสารหลักฐานทางการเงินอัตโนมัติจัดทำขึ้นเพื่อประกอบการแสดงรายการภาษี — Systematic Trader Pro Audit Engine</div>
+                </div>
+            </body>
+            </html>
+            """
+
+            try:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(html_content)
+                messagebox.showinfo("ออกเอกสารสำเร็จ", f"✅ บันทึกรายงานการเงินเรียบร้อยแล้ว!\nระบบจะเปิดไฟล์ผ่านเบราว์เซอร์ให้ทันที")
+                webbrowser.open(file_path)
+            except Exception as e:
+                messagebox.showerror("เกิดข้อผิดพลาด", f"ไม่สามารถบันทึกไฟล์ได้: {str(e)}")
+
+    def delete_selected_entry(self):
+        selected_item = self.tree.selection()
+        if not selected_item:
+            messagebox.showwarning("แจ้งเตือน", "กรุณาคลิกเลือกรายการที่ต้องการลบในตารางก่อนครับ")
+            return
+
+        if not messagebox.askyesno("ยืนยันการลบ", "⚠️ คุณต้องการลบรายการที่เลือก พร้อมทั้งไฟล์รูปสลิปและรูปกราฟที่เกี่ยวข้อง (ถ้ามี) ใช่หรือไม่?"):
+            return
+
+        rows = []
+        header = None
+        if os.path.exists(FILENAME):
+            with open(FILENAME, mode="r", encoding="utf-8") as file:
+                reader = csv.reader(file)
+                header = next(reader, None)
+                rows = list(reader)
+
+        all_items = self.tree.get_children()
+        row_pos = list(all_items).index(selected_item[0])
+        csv_index = len(rows) - 1 - row_pos
+
+        if 0 <= csv_index < len(rows):
+            target_row = rows[csv_index]
+            if len(target_row) >= 10 and target_row[9].strip():
+                if os.path.exists(target_row[9].strip()):
+                    try:
+                        os.remove(target_row[9].strip())
+                    except Exception:
+                        pass
+            if len(target_row) >= 11 and target_row[10].strip():
+                if os.path.exists(target_row[10].strip()):
+                    try:
+                        os.remove(target_row[10].strip())
+                    except Exception:
+                        pass
+
+            rows.pop(csv_index)
+            with open(FILENAME, mode="w", newline="", encoding="utf-8") as file:
+                writer = csv.writer(file)
+                if header:
+                    writer.writerow(header)
+                writer.writerows(rows)
+
+            self.lbl_status.config(text=" ลบรายการและไฟล์รูปภาพที่เกี่ยวข้องเรียบร้อยแล้ว", fg=self.RED_COLOR)
+            messagebox.showinfo("สำเร็จ", "🗑️ ลบรายการและไฟล์รูปภาพหลักฐานเรียบร้อยแล้วครับ")
+            self.refresh_all_data()
+
+    def refresh_all_data(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        all_rows = []
+        available_months = set()
+        total_rules_score = 0
+        rule_count = 0
+
+        if os.path.exists(FILENAME):
+            with open(FILENAME, mode="r", encoding="utf-8") as file:
+                reader = csv.reader(file)
+                header = next(reader, None)
+                for row in reader:
+                    if len(row) >= 8:
+                        date_str = row[0]
+                        rule_status = row[7]
+                        try:
+                            month_key = date_str[:7]
+                            if len(month_key) == 7:
+                                available_months.add(month_key)
+                        except Exception:
+                            pass
+                        
+                        if "100%" in rule_status:
+                            total_rules_score += 1.0
+                        elif "เล็กน้อย" in rule_status:
+                            total_rules_score += 0.5
+                        else:
+                            total_rules_score += 0.0
+                        rule_count += 1
+
+                        all_rows.append(row)
+
+        sorted_months = sorted(list(available_months), reverse=True)
+        filter_options = ["ทั้งหมด (All Time)"] + sorted_months
+        current_selection = self.combo_month_filter.get()
+        
+        self.combo_month_filter['values'] = filter_options
+        if current_selection in filter_options:
+            self.combo_month_filter.set(current_selection)
+        else:
+            self.combo_month_filter.current(0)
+
+        selected_filter = self.combo_month_filter.get()
+
+        total_pnl = 0.0
+        total_withdrawal = 0.0
+        total_trades = 0
+        wins = 0
+
+        for row in all_rows:
+            if len(row) >= 8:
+                try:
+                    pnl_float = float(row[3])
+                    withdraw_float = float(row[4]) if row[4] else 0.0
+                    total_pnl += pnl_float
+                    total_withdrawal += withdraw_float
+                    if pnl_float != 0:
+                        if pnl_float > 0:
+                            wins += 1
+                        total_trades += 1
+                except ValueError:
+                    pass
+
+        filtered_pnl = 0.0
+        filtered_withdraw = 0.0
+        filtered_trades = 0
+        filtered_wins = 0
+
+        for row in reversed(all_rows):
+            if len(row) >= 8:
+                date = row[0]
+                sym = row[1]
+                act = row[2]
+                pnl_val = row[3]
+                withdraw_val = row[4]
+                rr = row[5]
+                capital = row[6]
+                rule = row[7]
+                has_receipt = "📷 มีสลิป" if len(row) >= 10 and row[9].strip() else "-"
+                has_chart = "📈 มีกราฟ" if len(row) >= 11 and row[10].strip() else "-"
+                
+                month_key = date[:7]
+                if selected_filter != "ทั้งหมด (All Time)" and month_key != selected_filter:
+                    continue
+
+                try:
+                    pnl_float = float(pnl_val)
+                    withdraw_float = float(withdraw_val) if withdraw_val else 0.0
+                    
+                    filtered_pnl += pnl_float
+                    filtered_withdraw += withdraw_float
+                    
+                    if pnl_float != 0:
+                        if pnl_float > 0:
+                            filtered_wins += 1
+                            tag = "win"
+                        else:
+                            tag = "loss"
+                        filtered_trades += 1
+                    elif withdraw_float > 0:
+                        tag = "withdraw"
+                    else:
+                        tag = ""
+
+                    pnl_disp = f"+${pnl_float:,.2f}" if pnl_float > 0 else (f"-${abs(pnl_float):,.2f}" if pnl_float < 0 else "$0.00")
+                    withdraw_disp = f"${withdraw_float:,.2f}" if withdraw_float > 0 else "-"
+                except ValueError:
+                    tag = ""
+                    pnl_disp = pnl_val
+                    withdraw_disp = "-"
+
+                self.tree.insert("", "end", values=(date, sym, pnl_disp, withdraw_disp, rr, capital, rule, has_receipt, has_chart), tags=(tag,))
+
+        try:
+            initial_cap = float(self.entry_initial_cap.get().strip())
+        except ValueError:
+            initial_cap = get_initial_capital()
+
+        current_balance = initial_cap + total_pnl - total_withdrawal
+        
+        display_pnl = filtered_pnl if selected_filter != "ทั้งหมด (All Time)" else total_pnl
+        display_withdraw = filtered_withdraw if selected_filter != "ทั้งหมด (All Time)" else total_withdrawal
+        display_trades = filtered_trades if selected_filter != "ทั้งหมด (All Time)" else total_trades
+        display_wins = filtered_wins if selected_filter != "ทั้งหมด (All Time)" else wins
+
+        win_rate = (display_wins / display_trades * 100) if display_trades > 0 else 0.0
+        pnl_text = f"+${display_pnl:,.2f}" if display_pnl >= 0 else f"-${abs(display_pnl):,.2f}"
+        
+        grade_str = "N/A"
+        grade_color = self.TEXT_MUTED
+        if rule_count > 0:
+            avg_score = (total_rules_score / rule_count) * 100
+            if avg_score >= 90:
+                grade_str = "เกรด A (ยอดเยี่ยม 🔥)"
+                grade_color = self.GREEN_COLOR
+            elif avg_score >= 70:
+                grade_str = "เกรด B (ดีมาก 👍)"
+                grade_color = self.ACCENT_CYAN
+            elif avg_score >= 50:
+                grade_str = "เกรด C (ต้องปรับปรุง ⚠️)"
+                grade_color = self.ACCENT_AMBER
+            else:
+                grade_str = "เกรด D (ผิดวินัย 🚨)"
+                grade_color = self.RED_COLOR
+
+        self.card_balance_val.config(text=f"${current_balance:,.2f}")
+        self.card_pnl_val.config(text=pnl_text, fg=self.GREEN_COLOR if display_pnl >= 0 else self.RED_COLOR)
+        self.card_withdraw_val.config(text=f"${display_withdraw:,.2f}")
+        self.card_winrate_val.config(text=f"{win_rate:.1f}%")
+        self.card_grade_val.config(text=grade_str, fg=grade_color)
+
+    def open_tax_calculator(self):
+        tax_win = tk.Toplevel(self.root)
+        tax_win.title("🇹🇭 เครื่องมือคำนวณ & ออกรายงานภาษี (TAX AUDIT REPORT)")
+        tax_win.geometry("820x960")
+        tax_win.configure(bg=self.BG_MAIN)
+        tax_win.resizable(False, False)
+
+        tk.Label(tax_win, text="🇹🇭 คำนวณภาษีเงินได้โอนเข้าไทย & หักต้นทุนการเทรด", font=("Tahoma", 15, "bold"), fg=self.ACCENT_CYAN, bg=self.BG_MAIN).pack(pady=(15, 3))
+        tk.Label(tax_win, text="อ้างอิงตามเกณฑ์กรมสรรพากร (รองรับการหักต้นทุน/ค่าใช้จ่ายตามจริงตามหลักบัญชีธุรกิจ)", font=self.FONT_TEXT, fg=self.TEXT_MUTED, bg=self.BG_MAIN).pack(pady=(0, 10))
+
+        card = tk.Frame(tax_win, bg=self.CARD_BG, padx=18, pady=14, highlightbackground="#334155", highlightthickness=1)
+        card.pack(fill="x", padx=20, pady=5)
+
+        tk.Label(card, text="ปีที่นำเงินเข้าไทย (ปีภาษี):", font=self.FONT_TEXT, fg=self.TEXT_MUTED, bg=self.CARD_BG).grid(row=0, column=0, sticky="w", pady=4)
+        current_year = datetime.now().year
+        entry_year = tk.Entry(card, font=self.FONT_TEXT, bg=self.INPUT_BG, fg=self.TEXT_MAIN, insertbackground="white", bd=0, highlightthickness=1, highlightbackground="#475569", width=22)
+        entry_year.insert(0, str(current_year))
+        entry_year.grid(row=0, column=1, pady=4, ipady=3)
+
+        tk.Label(card, text="จำนวนเงินที่โอนเข้า (USD):", font=self.FONT_TEXT, fg=self.TEXT_MUTED, bg=self.CARD_BG).grid(row=1, column=0, sticky="w", pady=4)
+        entry_usd = tk.Entry(card, font=self.FONT_TEXT, bg=self.INPUT_BG, fg=self.TEXT_MAIN, insertbackground="white", bd=0, highlightthickness=1, highlightbackground="#475569", width=22)
+        entry_usd.insert(0, "1000")
+        entry_usd.grid(row=1, column=1, pady=4, ipady=3)
+
+        tk.Label(card, text="อัตราแลกเปลี่ยน (บาท / USD):", font=self.FONT_TEXT, fg=self.TEXT_MUTED, bg=self.CARD_BG).grid(row=2, column=0, sticky="w", pady=4)
+        entry_fx = tk.Entry(card, font=self.FONT_TEXT, bg=self.INPUT_BG, fg=self.TEXT_MAIN, insertbackground="white", bd=0, highlightthickness=1, highlightbackground="#475569", width=22)
+        entry_fx.insert(0, "35.5")
+        entry_fx.grid(row=2, column=1, pady=4, ipady=3)
+
+        # 🛠️ ช่องกรอกหักต้นทุน / ค่าใช้จ่ายการเทรดตามจริง (ตามข้อกฎหมายและหลักบัญชี)
+        tk.Label(card, text="หักต้นทุน/ค่าใช้จ่ายการเทรด (บาท):", font=self.FONT_TEXT, fg=self.ACCENT_AMBER, bg=self.CARD_BG).grid(row=3, column=0, sticky="w", pady=4)
+        entry_expense = tk.Entry(card, font=self.FONT_TEXT, bg=self.INPUT_BG, fg=self.TEXT_MAIN, insertbackground="white", bd=0, highlightthickness=1, highlightbackground="#475569", width=22)
+        entry_expense.insert(0, "0")
+        entry_expense.grid(row=3, column=1, pady=4, ipady=3)
+
+        res_frame = tk.Frame(tax_win, bg=self.CARD_BG, padx=18, pady=12, highlightbackground=self.ACCENT_PRIMARY, highlightthickness=1)
+        res_frame.pack(fill="x", padx=20, pady=8)
+
+        lbl_thb_val = tk.Label(res_frame, text="เงินบาทที่ได้รับรวม: ฿0.00", font=("Tahoma", 11, "bold"), fg=self.TEXT_MAIN, bg=self.CARD_BG)
+        lbl_thb_val.pack(anchor="w", pady=2)
+
+        lbl_deduct_val = tk.Label(res_frame, text="หักต้นทุน/ค่าใช้จ่ายการเทรดจริง: -฿0.00", font=self.FONT_TEXT, fg=self.ACCENT_AMBER, bg=self.CARD_BG)
+        lbl_deduct_val.pack(anchor="w", pady=2)
+
+        lbl_allowance_val = tk.Label(res_frame, text="หักค่าลดหย่อนส่วนตัวพื้นฐาน: -฿60,000.00", font=self.FONT_TEXT, fg=self.TEXT_MUTED, bg=self.CARD_BG)
+        lbl_allowance_val.pack(anchor="w", pady=2)
+
+        lbl_net_income = tk.Label(res_frame, text="เงินได้สุทธิที่ต้องเสียภาษี: ฿0.00", font=("Tahoma", 11, "bold"), fg=self.ACCENT_CYAN, bg=self.CARD_BG)
+        lbl_net_income.pack(anchor="w", pady=2)
+
+        lbl_tax_payable = tk.Label(res_frame, text="รวมภาษีที่ต้องชำระทั้งสิ้น: ฿0.00", font=("Tahoma", 13, "bold"), fg=self.GREEN_COLOR, bg=self.CARD_BG)
+        lbl_tax_payable.pack(anchor="w", pady=(8, 2))
+
+        table_frame = tk.Frame(tax_win, bg=self.CARD_BG, padx=10, pady=10, highlightbackground="#334155", highlightthickness=1)
+        table_frame.pack(fill="both", expand=True, padx=20, pady=5)
+
+        tk.Label(table_frame, text="📊 ตารางแสดงการคำนวณภาษีทีละขั้นบันได (Progressive Breakdown)", font=self.FONT_HEADER, fg=self.ACCENT_CYAN, bg=self.CARD_BG).pack(anchor="w", pady=(0, 6))
+
+        columns = ("Bracket", "TaxRate", "TaxableChunk", "TaxAmount")
+        tax_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=4)
+        
+        tax_tree.heading("Bracket", text="ช่วงเงินได้สุทธิ (บาท)")
+        tax_tree.heading("TaxRate", text="อัตราภาษี")
+        tax_tree.heading("TaxableChunk", text="เงินได้ในขั้นนี้ (บาท)")
+        tax_tree.heading("TaxAmount", text="ภาษีที่คิดในขั้นนี้ (บาท)")
+
+        tax_tree.column("Bracket", width=180, anchor="center")
+        tax_tree.column("TaxRate", width=80, anchor="center")
+        tax_tree.column("TaxableChunk", width=150, anchor="e")
+        tax_tree.column("TaxAmount", width=150, anchor="e")
+
+        tax_tree.pack(fill="both", expand=True, pady=5)
+
+        self.last_tax_details = {}
+
+        def calculate_tax():
+            for item in tax_tree.get_children():
+                tax_tree.delete(item)
+
+            try:
+                tax_year = int(entry_year.get().strip())
+                usd = float(entry_usd.get().strip())
+                fx = float(entry_fx.get().strip())
+                expense_deduction = float(entry_expense.get().strip() or 0.0)
+                
+                thb = usd * fx
+                lbl_thb_val.config(text=f"เงินบาทที่ได้รับรวม: ฿{thb:,.2f} THB")
+                lbl_deduct_val.config(text=f"หักต้นทุน/ค่าใช้จ่ายการเทรดจริง: -฿{expense_deduction:,.2f} THB")
+
+                personal_allowance = 60000.0
+                income_after_expense = max(0.0, thb - expense_deduction)
+                taxable_income = max(0.0, income_after_expense - personal_allowance)
+                
+                lbl_net_income.config(text=f"เงินได้สุทธิที่ต้องเสียภาษี: ฿{taxable_income:,.2f} THB")
+
+                brackets = [
+                    (0, 150000, 0.0, "0%", "0 - 150,000"),
+                    (150000, 300000, 0.05, "5%", "150,001 - 300,000"),
+                    (300000, 500000, 0.10, "10%", "300,001 - 500,000"),
+                    (500000, 750000, 0.15, "15%", "500,001 - 750,000"),
+                    (750000, 1000000, 0.20, "20%", "750,001 - 1,000,000"),
+                    (1000000, 2000000, 0.25, "25%", "1,000,001 - 2,000,000"),
+                    (2000000, 5000000, 0.30, "30%", "2,000,001 - 5,000,000"),
+                    (5000000, float('inf'), 0.35, "35%", "5,000,001 ขึ้นไป")
+                ]
+
+                total_tax = 0.0
+                breakdown_list = []
+                for b_min, b_max, rate, rate_str, b_label in brackets:
+                    if taxable_income > b_min:
+                        chunk_limit = b_max if b_max != float('inf') else taxable_income
+                        chunk = min(taxable_income, chunk_limit) - b_min
+                        if chunk > 0:
+                            chunk_tax = chunk * rate
+                            total_tax += chunk_tax
+                            tax_tree.insert("", "end", values=(b_label, rate_str, f"{chunk:,.2f}", f"{chunk_tax:,.2f}"))
+                            breakdown_list.append((b_label, rate_str, chunk, chunk_tax))
+
+                lbl_tax_payable.config(text=f"รวมภาษีที่ต้องชำระทั้งสิ้น: ฿{total_tax:,.2f} THB", fg=self.RED_COLOR if total_tax > 0 else self.GREEN_COLOR)
+
+                self.last_tax_details = {
+                    "year": tax_year,
+                    "usd": usd,
+                    "fx": fx,
+                    "thb": thb,
+                    "expense": expense_deduction,
+                    "allowance": personal_allowance,
+                    "taxable": taxable_income,
+                    "tax": total_tax,
+                    "breakdown": breakdown_list
+                }
+
+            except ValueError:
+                messagebox.showerror("ข้อผิดพลาด", "กรุณากรอกตัวเลขปี จำนวนเงิน และอัตราแลกเปลี่ยนให้ถูกต้อง")
+
+        def generate_tax_report_pdf():
+            if not self.last_tax_details:
+                calculate_tax()
+            
+            d = self.last_tax_details
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".html",
+                filetypes=[("HTML Report / PDF Print", "*.html"), ("All Files", "*.*")],
+                title="บันทึกรายงานภาษีสำหรับยื่นสรรพากร",
+                initialfile=f"Tax_Audit_Report_{d['year']}.html"
+            )
+
+            if file_path:
+                rows_html = ""
+                for label, rate, chunk, tax_amt in d['breakdown']:
+                    rows_html += f"""
+                    <tr>
+                        <td style="padding: 10px; border: 1px solid #cbd5e1; text-align: center;">{label}</td>
+                        <td style="padding: 10px; border: 1px solid #cbd5e1; text-align: center;">{rate}</td>
+                        <td style="padding: 10px; border: 1px solid #cbd5e1; text-align: right;">฿{chunk:,.2f}</td>
+                        <td style="padding: 10px; border: 1px solid #cbd5e1; text-align: right;">฿{tax_amt:,.2f}</td>
+                    </tr>
+                    """
+
+                html_content = f"""
+                <!DOCTYPE html>
+                <html lang="th">
+                <head>
+                    <meta charset="UTF-8">
+                    <title>รายงานสรุปการคำนวณภาษีเงินได้นำเข้าจากต่างประเทศ ปีภาษี {d['year']}</title>
+                    <style>
+                        body {{ font-family: 'Tahoma', sans-serif; padding: 40px; color: #1e293b; background: #fff; max-width: 800px; margin: auto; }}
+                        .header {{ text-align: center; border-bottom: 2px solid #0284c7; padding-bottom: 15px; margin-bottom: 25px; }}
+                        .header h2 {{ margin: 0; color: #0f172a; font-size: 22px; }}
+                        .header p {{ margin: 5px 0 0 0; color: #64748b; font-size: 14px; }}
+                        .box {{ background: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 8px; margin-bottom: 20px; }}
+                        table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+                        th {{ padding: 10px; border: 1px solid #cbd5e1; font-size: 14px; background: #f1f5f9; text-align: center; }}
+                        td {{ font-size: 14px; }}
+                        .summary-total {{ font-size: 18px; font-weight: bold; color: #0284c7; text-align: right; margin-top: 20px; }}
+                        .legal-note {{ font-size: 13px; color: #475569; background: #fffbeb; border-left: 4px solid #f59e0b; padding: 14px; margin-top: 25px; line-height: 1.5; }}
+                        .footer {{ margin-top: 40px; font-size: 12px; text-align: center; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 15px; }}
+                        .print-btn {{ display: block; width: 100%; background: #059669; color: white; padding: 14px; text-align: center; font-size: 16px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; margin-bottom: 25px; }}
+                        .print-btn:hover {{ background: #047857; }}
+                        @media print {{ .print-btn {{ display: none; }} }}
+                    </style>
+                </head>
+                <body>
+                    <button class="print-btn" onclick="window.print()">🖨️ คลิกที่นี่เพื่อพิมพ์เอกสาร / บันทึกเป็น PDF</button>
+                    <div class="header">
+                        <h2>หนังสือสรุปการคำนวณภาษีเงินได้บุคคลธรรมดา (เงินได้ต่างประเทศ)</h2>
+                        <p>ออกโดยระบบ Systematic Trader Pro Audit Engine — สำหรับประกอบการแสดงรายการภาษีปี {d['year']}</p>
+                    </div>
+                    <div class="box">
+                        <h3 style="margin-top:0; font-size: 16px; color:#0369a1;">1. ข้อมูลการนำเงินเข้าและอัตราแลกเปลี่ยน</h3>
+                        <p><b>ปีภาษีที่นำเงินเข้า:</b> {d['year']}</p>
+                        <p><b>จำนวนเงินโอนกลับเข้าไทย:</b> ${d['usd']:,.2f} USD</p>
+                        <p><b>อัตราแลกเปลี่ยนอ้างอิง:</b> ฿{d['fx']:,.2f} THB / USD</p>
+                        <p style="font-size: 16px; font-weight: bold; color: #0f172a;"><b>รวมเป็นเงินได้พึงประเมินสุทธิ:</b> ฿{d['thb']:,.2f} THB</p>
+                    </div>
+                    <div class="box">
+                        <h3 style="margin-top:0; font-size: 16px; color:#0369a1;">2. การหักค่าใช้จ่ายและค่าลดหย่อนตามกฎหมาย</h3>
+                        <p><b>หักต้นทุน/ค่าใช้จ่ายการเทรดจริง:</b> -฿{d['expense']:,.2f} THB</p>
+                        <p><b>หักค่าลดหย่อนส่วนตัวพื้นฐาน (มาตรา 47):</b> -฿{d['allowance']:,.2f} THB</p>
+                        <hr style="border:0; border-top:1px solid #cbd5e1;">
+                        <p style="font-size: 16px; font-weight: bold; color: #0284c7;"><b>คงเหลือเงินได้สุทธิที่นำไปคำนวณภาษี:</b> ฿{d['taxable']:,.2f} THB</p>
+                    </div>
+                    <h3 style="font-size: 16px; color:#0369a1;">3. รายละเอียดคำนวณภาษีอัตราก้าวหน้า (Progressive Tax Rate)</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ช่วงเงินได้สุทธิ (บาท)</th>
+                                <th>อัตราภาษี</th>
+                                <th>เงินได้ในขั้นนี้ (บาท)</th>
+                                <th>ภาษีที่คิดในขั้นนี้ (บาท)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows_html}
+                        </tbody>
+                    </table>
+                    <div class="summary-total">รวมประเมินภาษีเงินได้ที่ต้องชำระทั้งสิ้น: ฿{d['tax']:,.2f} THB</div>
+                    <div class="legal-note"><b>📌 อ้างอิงข้อกฎหมาย:</b> รายงานการหักต้นทุนคำนวณตามหลักการบัญชีต้นทุนจริงเพื่อประกอบการยื่นแบบ ภ.ง.ด.90</div>
+                    <div class="footer">พิมพ์เมื่อวันที่: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</div>
+                </body>
+                </html>
+                """
+
+                try:
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(html_content)
+                    messagebox.showinfo("ออกเอกสารสำเร็จ", f"✅ บันทึกรายงานภาษีเรียบร้อยแล้ว!\nระบบจะเปิดไฟล์ผ่านเบราว์เซอร์ให้ทันที")
+                    webbrowser.open(file_path)
+                except Exception as e:
+                    messagebox.showerror("เกิดข้อผิดพลาด", f"ไม่สามารถบันทึกไฟล์ได้: {str(e)}")
+
+        btn_calc = tk.Button(tax_win, text="🧮 คำนวณภาษีและแสดงรายละเอียด", font=self.FONT_LABEL, bg=self.ACCENT_PRIMARY, fg="white", activebackground="#4F46E5", activeforeground="white", bd=0, pady=8, cursor="hand2", command=calculate_tax)
+        btn_calc.pack(fill="x", padx=20, pady=5)
+
+        btn_pdf = tk.Button(tax_win, text="📄 สร้างรายงานภาษีสำหรับพิมพ์เป็น PDF (Tax Audit Report)", font=self.FONT_LABEL, bg="#059669", fg="white", activebackground="#047857", activeforeground="white", bd=0, pady=9, cursor="hand2", command=generate_tax_report_pdf)
+        btn_pdf.pack(fill="x", padx=20, pady=5)
+
+        calculate_tax()
+
+if __name__ == "__main__":
+    init_file()
+    root = tk.Tk()
+    app = LargeThaiTerminalJournal(root)
+    root.mainloop()
