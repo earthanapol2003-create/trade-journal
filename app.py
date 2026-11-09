@@ -6,7 +6,7 @@ st.set_page_config(
     page_title="Systematic Trader Pro", page_icon="💎", layout="centered"
 )
 
-# ตกแต่ง CSS ธีมเข้มหรูหราสไตล์โปรแกรมเทรด
+# ตกแต่ง CSS ธีมเข้มหรูหรา
 st.markdown(
     """
     <style>
@@ -40,45 +40,34 @@ if not df.empty:
   # ทำความสะอาดชื่อหัวตาราง
   df.columns = df.columns.astype(str).str.strip()
 
-  # อ้างอิงตามโครงสร้างโปรแกรมคอมพิวเตอร์: คอลัมน์ที่ 4 (index 3) คือ P&L / กำไร-ขาดทุน
-  # ตรวจสอบว่ามีคอลัมน์เพียงพอไหม ถ้ามี ให้เลือกคอลัมน์ที่ 4 เป็นหลัก
-  pnl_col = None
-  if len(df.columns) >= 4:
-    pnl_col = df.columns[3]  # คอลัมน์ที่ 4 (index 3) ตรงกับ pnl
-  else:
-    # เผื่อกรณีฉุกเฉิน ให้หาคอลัมน์ที่มีคำว่า pnl หรือ กำไร
-    for col in df.columns:
-      if any(
-          kw in col.lower() for kw in ["pnl", "กำไร", "profit", "loss", "net"]
-      ):
-        pnl_col = col
-        break
-    if not pnl_col and len(df.columns) > 0:
-      pnl_col = df.columns[-1]  # ใช้คอลัมน์สุดท้ายสำรอง
+  # อ้างอิงตามโครงสร้างโปรแกรมคอมพิวเตอร์:
+  # Index 0 = วันที่ (Date), Index 3 = กำไร/ขาดทุน (P&L), Index 4 = ยอดถอน (Withdraw)
+  pnl_col = df.columns[3] if len(df.columns) > 3 else None
 
   # แปลงข้อมูลกำไรให้เป็นตัวเลขเพื่อนำมาคำนวณสถิติ
   if pnl_col:
-    df[pnl_col] = (
+    cleaned_pnl = (
         df[pnl_col]
         .astype(str)
         .str.replace("$", "", regex=False)
         .str.replace(",", "", regex=False)
     )
-    df[pnl_col] = pd.to_numeric(df[pnl_col], errors="coerce").fillna(0)
+    pnl_series = pd.to_numeric(cleaned_pnl, errors="coerce").fillna(0)
 
     total_trades = len(df)
-    total_pnl = df[pnl_col].sum()
-    wins = len(df[df[pnl_col] > 0])
-    losses = len(df[df[pnl_col] < 0])
+    total_pnl = pnl_series.sum()
+    wins = len(pnl_series[pnl_series > 0])
+    losses = len(pnl_series[pnl_series < 0])
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
   else:
+    pnl_series = pd.Series([0] * len(df))
     total_trades = len(df)
     total_pnl = 0
     wins = 0
     losses = 0
     win_rate = 0
 
-  # แสดงการ์ดสถิติ (P&L รวม, Win Rate, จำนวนเทรด, ชนะ/แพ้)
+  # แสดงการ์ดสถิติหลัก
   col1, col2 = st.columns(2)
   with col1:
     st.metric(
@@ -96,24 +85,47 @@ if not df.empty:
     st.metric(label="✅ ชนะ / ❌ แพ้", value=f"{wins} / {losses}")
 
   st.markdown("---")
-  st.markdown("### 📋 ตารางบันทึกประวัติการเทรด")
+  st.markdown("### 📋 ประวัติการเทรด (ย่อส่วนสำคัญ)")
+
+  # เลือกแสดงผลเฉพาะคอลัมน์ที่ต้องการ: วัน/เดือน/ปี, กำไร/ขาดทุน, ถอน
+  # ตรวจสอบว่ามีคอลัมน์ครบตามตำแหน่งไหม (Index 0, 3, 4)
+  if len(df.columns) >= 5:
+    display_df = df.iloc[:, [0, 3, 4]].copy()
+    display_df.columns = [
+        "วัน/เดือน/ปี",
+        "กำไร/ขาดทุน ($)",
+        "ยอดถอน ($)",
+    ]  # เปลี่ยนหัวตารางให้ดูง่ายบนมือถือ
+  elif len(df.columns) >= 4:
+    display_df = df.iloc[:, [0, 3]].copy()
+    display_df.columns = ["วัน/เดือน/ปี", "กำไร/ขาดทุน ($)"]
+  else:
+    display_df = df.copy()
 
   # ตกแต่งไฮไลต์สีเฉพาะคอลัมน์กำไร/ขาดทุนในตารางให้อ่านง่าย
-  if pnl_col:
+  target_col = (
+      "กำไร/ขาดทุน ($)" if "กำไร/ขาดทุน ($)" in display_df.columns else pnl_col
+  )
+
+  if target_col and target_col in display_df.columns:
 
     def highlight_pnl(val):
-      if pd.isna(val):
+      try:
+        num = float(
+            str(val).replace("$", "").replace(",", "")
+        ) if pd.notna(val) else 0
+        color = "#2ea043" if num > 0 else "#f85149" if num < 0 else "#c9d1d9"
+        return f"color: {color}; font-weight: bold;"
+      except:
         return ""
-      color = "#2ea043" if val > 0 else "#f85149" if val < 0 else "#c9d1d9"
-      return f"color: {color}; font-weight: bold;"
 
     try:
-      styled_df = df.style.map(highlight_pnl, subset=[pnl_col])
+      styled_df = display_df.style.map(highlight_pnl, subset=[target_col])
       st.dataframe(styled_df, use_container_width=True)
     except Exception:
-      st.dataframe(df, use_container_width=True)
+      st.dataframe(display_df, use_container_width=True)
   else:
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(display_df, use_container_width=True)
 
   st.caption("💡 ข้อมูลซิงค์ล่าสุดจากระบบคอมพิวเตอร์ของคุณ")
 else:
