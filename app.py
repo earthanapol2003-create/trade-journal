@@ -37,25 +37,27 @@ except Exception:
   df = pd.DataFrame()
 
 if not df.empty:
-  # ทำความสะอาดชื่อหัวตาราง (ตัดช่องว่างที่อาจติดมาออก)
+  # ทำความสะอาดชื่อหัวตาราง
   df.columns = df.columns.astype(str).str.strip()
 
-  # ค้นหาคอลัมน์ที่เกี่ยวกับกำไร/ขาดทุนแบบยืดหยุ่นที่สุด
-  pnl_col = None
-  keywords = ["กำไร", "p&l", "profit", "loss", "net", "ผลลัพธ์", "gain"]
-  for col in df.columns:
+  # ให้ผู้ใช้เลือกคอลัมน์กำไร/ขาดทุนด้วยตัวเองจาก Sidebar หรือหน้าจอ เพื่อความแม่นยำสูงสุด
+  st.sidebar.markdown("### ⚙️ ตั้งค่าการแสดงผล")
+  column_list = list(df.columns)
+
+  # พยายามหาคอลัมน์ที่น่าจะเป็นกำไรมาตั้งเป็นค่าเริ่มต้น
+  default_idx = 0
+  for i, col in enumerate(column_list):
     col_lower = col.lower()
-    if any(kw in col_lower for kw in keywords):
-      pnl_col = col
+    if any(kw in col_lower for kw in ["กำไร", "p&l", "profit", "loss", "net"]):
+      default_idx = i
       break
 
-  # ถ้ายังหาไม่เจอ ให้ลองเลือกคอลัมน์ที่เป็นตัวเลขตัวแรกที่มีโอกาสเป็นกำไร
-  if not pnl_col:
-    for col in df.select_dtypes(include=["number"]).columns:
-      pnl_col = col
-      break
+  selected_pnl_col = st.sidebar.selectbox(
+      "เลือกคอลัมน์สำหรับคำนวณกำไร/ขาดทุน:", column_list, index=default_idx
+  )
 
-  # แปลงข้อมูลในคอลัมน์กำไรให้เป็นตัวเลข (ป้องกันกรณีมีเครื่องหมาย $ หรือตัวอักษรติดมา)
+  # แปลงข้อมูลในคอลัมน์ที่เลือกให้เป็นตัวเลข
+  pnl_col = selected_pnl_col
   if pnl_col:
     df[pnl_col] = (
         df[pnl_col]
