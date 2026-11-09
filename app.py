@@ -1,12 +1,12 @@
 import pandas as pd
 import streamlit as st
 
-# ตั้งค่าหน้าเว็บ
+# ตั้งค่าหน้าเว็บให้รองรับมือถือและดูพรีเมียม
 st.set_page_config(
     page_title="Systematic Trader Pro", page_icon="💎", layout="centered"
 )
 
-# ตกแต่ง CSS ธีมเข้มหรูหรา
+# ตกแต่ง CSS ธีมเข้มหรูหราสไตล์โปรแกรมเทรด
 st.markdown(
     """
     <style>
@@ -40,24 +40,23 @@ if not df.empty:
   # ทำความสะอาดชื่อหัวตาราง
   df.columns = df.columns.astype(str).str.strip()
 
-  # ให้ผู้ใช้เลือกคอลัมน์กำไร/ขาดทุนด้วยตัวเองจาก Sidebar หรือหน้าจอ เพื่อความแม่นยำสูงสุด
-  st.sidebar.markdown("### ⚙️ ตั้งค่าการแสดงผล")
-  column_list = list(df.columns)
+  # อ้างอิงตามโครงสร้างโปรแกรมคอมพิวเตอร์: คอลัมน์ที่ 4 (index 3) คือ P&L / กำไร-ขาดทุน
+  # ตรวจสอบว่ามีคอลัมน์เพียงพอไหม ถ้ามี ให้เลือกคอลัมน์ที่ 4 เป็นหลัก
+  pnl_col = None
+  if len(df.columns) >= 4:
+    pnl_col = df.columns[3]  # คอลัมน์ที่ 4 (index 3) ตรงกับ pnl
+  else:
+    # เผื่อกรณีฉุกเฉิน ให้หาคอลัมน์ที่มีคำว่า pnl หรือ กำไร
+    for col in df.columns:
+      if any(
+          kw in col.lower() for kw in ["pnl", "กำไร", "profit", "loss", "net"]
+      ):
+        pnl_col = col
+        break
+    if not pnl_col and len(df.columns) > 0:
+      pnl_col = df.columns[-1]  # ใช้คอลัมน์สุดท้ายสำรอง
 
-  # พยายามหาคอลัมน์ที่น่าจะเป็นกำไรมาตั้งเป็นค่าเริ่มต้น
-  default_idx = 0
-  for i, col in enumerate(column_list):
-    col_lower = col.lower()
-    if any(kw in col_lower for kw in ["กำไร", "p&l", "profit", "loss", "net"]):
-      default_idx = i
-      break
-
-  selected_pnl_col = st.sidebar.selectbox(
-      "เลือกคอลัมน์สำหรับคำนวณกำไร/ขาดทุน:", column_list, index=default_idx
-  )
-
-  # แปลงข้อมูลในคอลัมน์ที่เลือกให้เป็นตัวเลข
-  pnl_col = selected_pnl_col
+  # แปลงข้อมูลกำไรให้เป็นตัวเลขเพื่อนำมาคำนวณสถิติ
   if pnl_col:
     df[pnl_col] = (
         df[pnl_col]
@@ -79,7 +78,7 @@ if not df.empty:
     losses = 0
     win_rate = 0
 
-  # แสดงการ์ดสถิติ
+  # แสดงการ์ดสถิติ (P&L รวม, Win Rate, จำนวนเทรด, ชนะ/แพ้)
   col1, col2 = st.columns(2)
   with col1:
     st.metric(
@@ -99,8 +98,22 @@ if not df.empty:
   st.markdown("---")
   st.markdown("### 📋 ตารางบันทึกประวัติการเทรด")
 
-  # แสดงตารางข้อมูล
-  st.dataframe(df, use_container_width=True)
+  # ตกแต่งไฮไลต์สีเฉพาะคอลัมน์กำไร/ขาดทุนในตารางให้อ่านง่าย
+  if pnl_col:
+
+    def highlight_pnl(val):
+      if pd.isna(val):
+        return ""
+      color = "#2ea043" if val > 0 else "#f85149" if val < 0 else "#c9d1d9"
+      return f"color: {color}; font-weight: bold;"
+
+    try:
+      styled_df = df.style.map(highlight_pnl, subset=[pnl_col])
+      st.dataframe(styled_df, use_container_width=True)
+    except Exception:
+      st.dataframe(df, use_container_width=True)
+  else:
+    st.dataframe(df, use_container_width=True)
 
   st.caption("💡 ข้อมูลซิงค์ล่าสุดจากระบบคอมพิวเตอร์ของคุณ")
 else:
