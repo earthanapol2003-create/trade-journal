@@ -1,9 +1,9 @@
 import os
 import tkinter as tk
 from tkinter import messagebox
-from database import get_all_csv_rows, get_initial_capital
+from database import get_all_csv_rows
 
-def open_equity_chart_window(parent_root, entry_initial_cap, bg_main, card_bg, text_main, text_muted, accent_primary, accent_cyan, accent_purple, green_color, red_color):
+def open_equity_chart_window(parent_root, bg_main, card_bg, text_main, text_muted, accent_primary, accent_cyan, accent_purple, green_color, red_color):
     rows = get_all_csv_rows()
     if not rows:
         messagebox.showwarning("แจ้งเตือน", "ยังไม่มีข้อมูลประวัติการเทรดให้สร้างกราฟครับ")
@@ -21,22 +21,26 @@ def open_equity_chart_window(parent_root, entry_initial_cap, bg_main, card_bg, t
     tk.Label(header_frame, text="📊 EQUITY CURVE PERFORMANCE ANALYSIS", font=("Tahoma", 15, "bold"), fg=accent_cyan, bg=bg_main).pack(anchor="w")
     tk.Label(header_frame, text="กราฟแสดงเส้นทางการเติบโตของยอดเงินพอร์ตสุทธิ พร้อมจำลองพื้นที่สะสมกำไร", font=("Tahoma", 11), fg=text_muted, bg=bg_main).pack(anchor="w", pady=(2, 0))
 
-    try:
-        initial_cap = float(entry_initial_cap.get().strip())
-    except ValueError:
-        initial_cap = get_initial_capital()
-
-    points = [(0, initial_cap, "เริ่มต้น", "Initial Capital")]
-    current_eq = initial_cap
     sorted_rows = sorted(rows, key=lambda x: x[0] if len(x)>0 else "")
+    
+    # คำนวณกราฟพอร์ตเริ่มต้นจาก 0
+    points = [(0, 0.0, "เริ่มต้น", "Initial Equity")]
+    current_eq = 0.0
 
     for idx, row in enumerate(sorted_rows, start=1):
         if len(row) >= 5:
-            date, sym, act, pnl, withdraw = row[:5]
+            date, sym, act = row[0], row[1], row[2]
             try:
-                pnl_f = float(pnl) if pnl else 0.0
-                wd_f = float(withdraw) if withdraw else 0.0
-                current_eq = current_eq + pnl_f - wd_f
+                pnl_f = float(row[3]) if row[3] else 0.0
+                val_f = float(row[4]) if row[4] else 0.0
+                
+                if "ฝากเงิน" in act:
+                    current_eq += val_f
+                elif "ถอนเงินออก" in act:
+                    current_eq -= val_f
+                else:
+                    current_eq += pnl_f
+
                 points.append((idx, current_eq, date, f"{sym} ({act})"))
             except ValueError:
                 pass
@@ -47,8 +51,8 @@ def open_equity_chart_window(parent_root, entry_initial_cap, bg_main, card_bg, t
         return
 
     final_eq = points[-1][1]
-    total_profit = final_eq - initial_cap
-    profit_color = green_color if total_profit >= 0 else red_color
+    total_pnl = sum(float(r[3]) for r in rows if len(r) >= 5 and "ฝากเงิน" not in r[2] and "ถอนเงินออก" not in r[2])
+    profit_color = green_color if total_pnl >= 0 else red_color
 
     stat_bar = tk.Frame(eq_win, bg=bg_main)
     stat_bar.pack(fill="x", padx=30, pady=(0, 12))
@@ -57,16 +61,15 @@ def open_equity_chart_window(parent_root, entry_initial_cap, bg_main, card_bg, t
         f = tk.Frame(parent, bg=card_bg, padx=14, pady=8, highlightbackground=col, highlightthickness=1)
         f.pack(side="left", fill="x", expand=True, padx=(0, 10) if parent.winfo_children() else 0)
         tk.Label(f, text=title, font=("Tahoma", 9, "bold"), fg=text_muted, bg=card_bg).pack(anchor="w")
-        tk.Label(f, text=val, font=("Tahoma", 13, "bold"), fg=col, bg=card_bg).pack(anchor="w", pady=(2,0))
+        tk.Label(f, text=val, font=("Tahoma", 14, "bold"), fg=col, bg=card_bg).pack(anchor="w", pady=(2,0))
 
-    make_mini_card(stat_bar, "ทุนตั้งต้นพอร์ต", f"${initial_cap:,.2f}", accent_primary)
     make_mini_card(stat_bar, "ยอดพอร์ตปัจจุบัน", f"${final_eq:,.2f}", accent_cyan)
-    make_mini_card(stat_bar, "กำไรสุทธิทั้งหมด", f"${total_profit:,.2f}", profit_color)
+    make_mini_card(stat_bar, "กำไรสุทธิทั้งหมด", f"${total_pnl:,.2f}", profit_color)
 
     canvas_card = tk.Frame(eq_win, bg=card_bg, padx=15, pady=15, highlightbackground="#334155", highlightthickness=1)
     canvas_card.pack(fill="both", expand=True, padx=30, pady=(0, 25))
 
-    canvas_w, canvas_h = 880, 420
+    canvas_w, canvas_h = 880, 430
     canvas = tk.Canvas(canvas_card, width=canvas_w, height=canvas_h, bg=card_bg, highlightthickness=0)
     canvas.pack(fill="both", expand=True)
 
